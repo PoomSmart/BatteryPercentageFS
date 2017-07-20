@@ -1,7 +1,7 @@
 #import <Flipswitch/FSSwitchDataSource.h>
 #import <Flipswitch/FSSwitchPanel.h>
 #import <objc/runtime.h>
-#import "../PS.h"
+#import "../../PS.h"
 
 @interface SpringBoard : NSObject
 - (void)userDefaultsDidChange:(id)arg1;
@@ -15,9 +15,10 @@
 - (void)beginCoalescentBlock;
 @end
 
-@interface SBStatusBarDataManager : NSObject // iOS 6
+@interface SBStatusBarDataManager : NSObject // iOS 5-6
 + (SBStatusBarDataManager *)sharedDataManager;
-- (void)_updateBatteryItems;
+- (void)_updateBatteryItems; // iOS 6
+- (void)_updateBatteryPercentItem; // iOS 5
 @end
 
 CFStringRef kBatteryPercentKey = CFSTR("SBShowBatteryPercentage");
@@ -26,8 +27,7 @@ CFStringRef kSpringBoard = CFSTR("com.apple.springboard");
 @interface BatteryPercentageFSSwitch : NSObject <FSSwitchDataSource>
 @end
 
-BOOL batteryPercentageEnabled()
-{
+BOOL batteryPercentageEnabled() {
 	CFPreferencesAppSynchronize(kSpringBoard);
 	Boolean keyExist;
 	Boolean enabled = CFPreferencesGetAppBooleanValue(kBatteryPercentKey, kSpringBoard, &keyExist);
@@ -38,13 +38,11 @@ BOOL batteryPercentageEnabled()
 
 @implementation BatteryPercentageFSSwitch
 
-- (FSSwitchState)stateForSwitchIdentifier:(NSString *)switchIdentifier
-{
+- (FSSwitchState)stateForSwitchIdentifier:(NSString *)switchIdentifier {
 	return batteryPercentageEnabled() ? FSSwitchStateOn : FSSwitchStateOff;
 }
 
-- (void)updateBatteryPercentage
-{
+- (void)updateBatteryPercentage {
 	if (objc_getClass("SBStatusBarStateAggregator")) {
 		SBStatusBarStateAggregator *agg = (SBStatusBarStateAggregator *)[objc_getClass("SBStatusBarStateAggregator") sharedInstance];
 		[agg beginCoalescentBlock];
@@ -53,13 +51,17 @@ BOOL batteryPercentageEnabled()
 		else
 			[agg _updateBatteryItems];
 		[agg endCoalescentBlock];
-	} else
-		[[objc_getClass("SBStatusBarDataManager") sharedDataManager] _updateBatteryItems];
+	} else {
+		SBStatusBarDataManager *manager = [objc_getClass("SBStatusBarDataManager") sharedDataManager];
+		if ([manager respondsToSelector:@selector(_updateBatteryItems)])
+			[manager _updateBatteryItems];
+		else
+			[manager _updateBatteryPercentItem];
+	}
 		
 }
 
-- (void)applyState:(FSSwitchState)newState forSwitchIdentifier:(NSString *)switchIdentifier
-{
+- (void)applyState:(FSSwitchState)newState forSwitchIdentifier:(NSString *)switchIdentifier {
 	if (newState == FSSwitchStateIndeterminate)
 		return;
 	CFBooleanRef enabled = newState == FSSwitchStateOn ? kCFBooleanTrue : kCFBooleanFalse;
@@ -76,8 +78,7 @@ NSInteger batteryItem;
 
 %hook SBStatusBarStateAggregator
 
-- (BOOL)_setItem:(NSInteger)item enabled:(BOOL)enabled
-{
+- (BOOL)_setItem:(NSInteger)item enabled:(BOOL)enabled {
 	return %orig(item, item == batteryItem ? batteryPercentageEnabled() : enabled);
 }
 
@@ -87,16 +88,14 @@ NSInteger batteryItem;
 
 %hook SpringBoard
 
-- (void)userDefaultsDidChange:(id)arg1
-{
+- (void)userDefaultsDidChange:(id)arg1 {
 	%orig;
 	[[FSSwitchPanel sharedPanel] stateDidChangeForSwitchIdentifier:@"com.PS.BatteryPercentageFS"];
 }
 
 %end
 
-%ctor
-{
+%ctor {
 	if (isiOS9Up) {
 		batteryItem = isiOS93Up ? 9 : 8;
 		%init(iOS9);
